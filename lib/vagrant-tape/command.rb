@@ -9,18 +9,23 @@ module VagrantPlugins
       def execute
         require 'pty'
         require 'io/console'
-        puts "Start tape"
 
         master, slave = PTY.open
+        file_master, file_slave = PTY.open
 
         in_pid = fork do
-          log = File.open("test.log", "w")
-          $stdin.cooked!
-          $stdin.each_char do |c|
-            log.write c
-            master.write c
+          $stdin.raw do |io|
+            io.each_char do |c|
+              file_master.write c
+              master.write c
+            end
           end
-          log.close
+        end
+
+        file_pid = fork do
+          File.open("ssh-session.log", "a") do |file|
+            file_slave.each { |line| file.puts line }
+          end
         end
 
         pid = spawn("vagrant ssh", in:slave, out:$stdout)
@@ -29,6 +34,7 @@ module VagrantPlugins
         Process.wait pid
         puts "End of the tape"
         Process.kill("HUP", in_pid)
+        Process.kill("HUP", file_pid)
         Process.waitall
         puts "Close"
       end
