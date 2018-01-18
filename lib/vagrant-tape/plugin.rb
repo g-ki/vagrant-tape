@@ -9,9 +9,11 @@ module VagrantPlugins
       EOF
 
       command 'tape' do
-        require_relative 'command'
-        Command
+        require_relative 'command/root'
+        Command::Root
       end
+
+
     end
   end
 end
