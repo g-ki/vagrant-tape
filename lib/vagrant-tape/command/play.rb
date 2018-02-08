@@ -26,39 +26,59 @@ module VagrantPlugins
         end # execute
 
         def play(input)
+          require 'thread'
           require 'pty'
           require 'io/console'
 
-          @logger.info('Start loading')
+          @logger.info('Start playing')
 
-          master, slave = PTY.open
+          in_master, in_slave = PTY.open
+          out_master, out_slave = PTY.open
+
           input_file = File.open(input, 'r')
 
-          ssh_pid = spawn("vagrant ssh", in:slave, out:$stdout)
+          ssh_pid = spawn("vagrant ssh", in:in_slave, out:out_slave)
           @logger.debug("ssh #{ssh_pid}")
 
-          input_pid = fork do
-            sleep 2
+          semaphore = Mutex.new
+          semaphore.lock
+          last_write = Time.now
+
+          in_stream = Thread.new do
             input_file.each do |cmd|
-              while slave.tell < master.tell
-                puts "#{slave.tell} < #{master.tell} #{cmd}"
-                sleep 1
-              end
-              puts "#{slave.tell} >= #{master.tell} WATI IS OVER EXECUTE: #{cmd}"
-              master.puts cmd
+              semaphore.lock
+                in_master.puts cmd
+              semaphore.unlock
+              sleep(1)
             end
-            $stdin = master
-            # Process.kill("HUP", ssh_pid)
+            input_file.close()
           end
 
+          out_stream = Thread.new do
+            last_write = Time.now
 
-          Process.wait(ssh_pid)
+            out_master.each_char do |c|
+              print c
+              last_write = Time.now
+            end
+          end
 
+          # sync input and output
+          while in_stream.alive? do
+            # if nothing is written in the last ~second execute command
+            if (Time.now - last_write).to_i >= 1.3
+              semaphore.unlock if semaphore.owned?
+              sleep(0.5)
+            end
+            semaphore.try_lock
+            sleep(0.5)
+          end
+
+          puts
+          puts 'Tape finished'
+
+          Process.kill("HUP", ssh_pid)
           @logger.info('End of loading')
-          Process.kill("HUP", input_pid)
-          input_file.close()
-          Process.waitall
-
           0
         end
       end
